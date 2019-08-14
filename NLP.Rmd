@@ -1,0 +1,203 @@
+---
+title: "Assignment 3 - NLP"
+author: "Meijuan Zeng"
+date: "4/2/2019"
+output: html_document
+---
+
+## Libraries
+```{r}
+#Make sure you install and load the following libraries
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(topicmodels)
+
+#IF USING A MAC PLEASE RUN THIS CODE
+Sys.setlocale("LC_ALL", "C")
+```
+
+## Import all document files and the list of weeks file
+```{r}
+#Create a list of all the files
+file.list <- list.files(path="~/Downloads/Learning analytics major/HUDK4051 LA/natural-language-processing/class-notes", pattern=".csv")
+#Loop over file list importing them and binding them together
+setwd("~/Downloads/Learning analytics major/HUDK4051 LA/natural-language-processing/class-notes")
+D1 <- do.call("rbind", lapply(file.list, read.csv, header = TRUE, stringsAsFactors = FALSE))
+
+setwd("~/Downloads/Learning analytics major/HUDK4051 LA/natural-language-processing/")
+D2 <- read.csv("week-list.csv", header = TRUE)
+```
+
+## Step 1 - Clean the html tags from your text
+```{r}
+D1$Notes2 <- gsub("<.*?>", "", D1$Notes)
+D1$Notes2 <- gsub("nbsp", "" , D1$Notes2)
+D1$Notes2 <- gsub("nbspnbspnbsp", "" , D1$Notes2)
+```
+
+## Step 2 - Process text using the tm package: Alternative processing - Code has been altered to account for changes in the tm package
+```{r}
+#Convert the data frame to the corpus format that the tm package uses
+corpus <- Corpus(VectorSource(D1$Notes2))
+#Remove spaces
+corpus <- tm_map(corpus, stripWhitespace)
+#Convert to lower case
+corpus <- tm_map(corpus, content_transformer(tolower)) 
+#Remove pre-defined stop words ('the', 'a', etc)
+corpus <- tm_map(corpus, removeWords, stopwords('english'))
+#Convert words to stems ("education" = "edu") for analysis, for more info see  http://tartarus.org/~martin/PorterStemmer/
+corpus <- tm_map(corpus, stemDocument)
+#Remove numbers
+corpus <- tm_map(corpus, removeNumbers, lazy=TRUE)
+#remove punctuation
+corpus <- tm_map(corpus, removePunctuation, lazy=TRUE)
+
+#Convert corpus to a term document matrix - so each word can be analyzed individuallly
+tdm.corpus <- TermDocumentMatrix(corpus)
+
+#Note: we won't remove plural words here, plural words in English tend to be highly irregular and difficult to extract reliably
+```
+
+What processing steps have you conducted here? Why is this important? Are there any other steps you should take to process your text before analyzing?
+
+## The steps enable me to convert the text data into the right format in the way that the computer can recognize, which includes the removal of spaces, punctuation, numbers, and meaningless words. All the letters are also converted to the lowercase and the data were structured. It is important because these steps allow the words to be organized and documented easily. 
+
+## Step 3 - Find common words
+```{r}
+#The tm package can do some simple analysis, like find the most common words
+findFreqTerms(tdm.corpus, lowfreq=50, highfreq=Inf)
+#We can also create a vector of the word frequencies
+word.count <- sort(rowSums(as.matrix(tdm.corpus)), decreasing=TRUE)
+word.count <- data.frame(word.count)
+```
+
+## Generate a Word Cloud
+
+### ColorBrewer
+ColorBrewer is a useful tool to help you choose colors for visualizations that was originally built for cartographers. On the ColorBrewer website (http://colorbrewer2.org/#) you can test different color schemes or see what their preset color schemes look like. This is very useful, especially if you are making images for colorblind individuals. 
+```{r}
+#Define the colors the cloud will use
+col=brewer.pal(6,"Dark2")
+#Generate cloud
+wordcloud(corpus, min.freq=80, scale=c(5,2),rot.per = 0.25,
+          random.color=T, max.word=45, random.order=F,colors=col)
+```
+
+## Merge with week list so you have a variable representing weeks for each entry 
+```{r}
+D3 <- left_join(D1, D2, by = 'Title') 
+D4 <- D3 %>% select('Title','week','Notes2')
+```
+
+### Create a Term Document Matrix
+```{r}
+#Convert the data frame to the corpus format that the tm package uses
+corpus1 <- Corpus(VectorSource(D4$Notes2))
+#Remove spaces
+corpus1 <- tm_map(corpus1, stripWhitespace)
+#Convert to lower case
+corpus1 <- tm_map(corpus1, content_transformer(tolower)) 
+#Remove pre-defined stop words ('the', 'a', etc)
+corpus1 <- tm_map(corpus1, removeWords, stopwords('english'))
+#Convert words to stems ("education" = "edu") for analysis, for more info see  http://tartarus.org/~martin/PorterStemmer/
+corpus1 <- tm_map(corpus1, stemDocument)
+#Remove numbers
+corpus1 <- tm_map(corpus1, removeNumbers, lazy=TRUE)
+#remove punctuation
+corpus1 <- tm_map(corpus1, removePunctuation, lazy=TRUE)
+#Convert corpus to a term document matrix - so each word can be analyzed individuallly
+tdm.corpus1 <- TermDocumentMatrix(corpus1)
+#Define the colors the cloud will use
+col=brewer.pal(6,"Dark2")
+#Generate cloud
+wordcloud(corpus1, min.freq=80, scale=c(5,2),rot.per = 0.25,
+          random.color=T, max.word=45, random.order=F,colors=col)
+```
+
+# Sentiment Analysis
+
+### Match words in corpus to lexicons of positive & negative words
+```{r}
+#Upload positive and negative word lexicons
+positive <- readLines("positive-words.txt")
+negative <- readLines("negative-words.txt")
+
+#Search for matches between each word and the two lexicons
+D3$positive <- tm_term_score(tdm.corpus1, positive)
+D3$negative <- tm_term_score(tdm.corpus1, negative)
+
+#Generate an overall pos-neg score for each line
+D3$score <- D3$positive - D3$negative
+
+
+```
+
+## Generate a visualization of the sum of the sentiment score over weeks
+```{r}
+
+D5 <- select(D3, 'week','score')%>%na.omit() 
+D5 <- D5%>%group_by(week)%>%summarise(total_score=sum(score))
+ggplot(D5,aes(week,total_score))+geom_col() + scale_x_continuous(breaks = c(2:14)) +labs(title = "Change of the Sentiment Score Over Time", x= "Week", y= "Total Sentiment Score")
+```
+
+# LDA Topic Modelling
+
+Using the same csv file you have generated the LDA analysis will treat each row of the data frame as a document. Does this make sense for generating topics?
+
+##It makes sense to generate topics using LDA modelling. We can find out certain topics based on some key words of students' notes.
+
+```{r}
+#Term Frequency Inverse Document Frequency
+dtm.tfi <- DocumentTermMatrix(corpus, control = list(weighting = weightTf))
+
+#Remove very uncommon terms (term freq inverse document freq < 0.1)
+dtm.tfi <- dtm.tfi[,dtm.tfi$v >= 0.1]
+
+#Remove non-zero entries
+rowTotals <- apply(dtm.tfi , 1, sum) #Find the sum of words in each Document
+dtm.tfi   <- dtm.tfi[rowTotals> 0, ] #Divide by sum across rows
+
+lda.model = LDA(dtm.tfi, k = 3, seed = 150)
+
+#Which terms are most common in each topic
+terms(lda.model)
+
+#Which documents belong to which topic
+doc_topic <- data.frame(topics(lda.model))
+
+
+```
+
+What does an LDA topic represent? 
+## Topic 1: learn, topic 2: data, topic 3: network
+
+# Main Task 
+
+Your task is to generate a *single* visualization showing: 
+
+- Sentiment for each week and 
+- One important topic for that week
+
+```{r}
+D6 <- select(D3, week)
+D6$num <- row.names(D6)
+doc_topic$num <- row.names(doc_topic)
+D7 <- left_join(D6, doc_topic, by = 'num')
+D7 <- D7[-2]
+names(D7) <- c('week','topics')
+D7 <- na.omit(D7)
+getmode <- function(t){
+  uniqt <-unique(t)
+  uniqt[which.max(tabulate(match(t, uniqt)))]
+}
+D8 <- D7 %>% group_by(week)%>% summarise(important_topic = getmode(topics))
+D9 <- left_join(D5, D8, by = 'week')
+D9$important_topic <- as.character(D9$important_topic)
+ggplot(D9, aes(week, total_score,fill = important_topic, label = important_topic)) + geom_col() + geom_text()+ scale_x_continuous(breaks=c(2:14))+labs(title = "Sentiment and important topics for that week", x= "Week", y= "Total Sentiment Score")
+
+```
+
